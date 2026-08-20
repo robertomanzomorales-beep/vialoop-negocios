@@ -2,14 +2,14 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://vialoop-negocios.espacio-de-t-1837.chatgpt.site"),
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"),
   title: "Vialoop Negocios",
   description: "Caja, inventario y decisiones claras para almacenes, botillerías y comercios locales.",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
   openGraph: {
     title: "Vialoop Negocios",
     description: "Caja, inventario y decisiones claras para almacenes, botillerías y comercios locales.",
-    url: "https://vialoop-negocios.espacio-de-t-1837.chatgpt.site",
+    url: "/",
     siteName: "Vialoop Negocios",
     locale: "es_CL",
     type: "website",

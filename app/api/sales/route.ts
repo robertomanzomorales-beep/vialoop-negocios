@@ -1,25 +1,14 @@
-import { desc, eq, sql } from "drizzle-orm";
-import { getDb } from "../../../db";
-import { businesses, products, saleItems, sales, stockMovements } from "../../../db/schema";
+import { getBusinessContext } from "@/lib/business-context";
 
-type SalePayload = {
-  paymentMethod?: "cash" | "card" | "transfer" | "credit";
-  items?: Array<{ productId: number; name: string; quantity: number; unitPrice: number; unitCost?: number }>;
-};
-
-async function getBusinessId() {
-  const db = getDb();
-  const [business] = await db.select({ id: businesses.id }).from(businesses).where(eq(businesses.slug, "botilleria-don-pedro")).limit(1);
-  if (!business) throw new Error("El negocio aún no está configurado");
-  return business.id;
-}
+type SalePayload = { paymentMethod?: "cash" | "card" | "transfer" | "credit"; items?: Array<{ productId: string; name: string; quantity: number; unitPrice: number; unitCost?: number }> };
 
 export async function GET() {
   try {
-    const db = getDb();
-    const businessId = await getBusinessId();
-    const rows = await db.select().from(sales).where(eq(sales.businessId, businessId)).orderBy(desc(sales.createdAt)).limit(50);
-    return Response.json({ sales: rows });
+    const context = await getBusinessContext();
+    if (!context?.membership) return Response.json({ error: "No autorizado" }, { status: 401 });
+    const { data, error } = await context.supabase.from("sales").select("*").eq("business_id", context.membership.business_id).order("created_at", { ascending: false }).limit(50);
+    if (error) throw error;
+    return Response.json({ sales: data });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No fue posible cargar las ventas" }, { status: 500 });
   }
@@ -27,20 +16,14 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    const context = await getBusinessContext();
+    if (!context?.membership) return Response.json({ error: "No autorizado" }, { status: 401 });
     const payload = await request.json() as SalePayload;
-    const items = payload.items?.filter((item) => Number.isInteger(item.productId) && Number.isInteger(item.quantity) && item.quantity > 0 && Number.isInteger(item.unitPrice) && item.unitPrice >= 0) ?? [];
+    const items = payload.items?.filter((item) => item.productId && Number.isInteger(item.quantity) && item.quantity > 0 && Number.isInteger(item.unitPrice) && item.unitPrice >= 0) ?? [];
     if (!items.length || !payload.paymentMethod) return Response.json({ error: "La venta requiere productos y forma de pago" }, { status: 400 });
-    const db = getDb();
-    const businessId = await getBusinessId();
-    const total = items.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0);
-    const [sale] = await db.insert(sales).values({ businessId, paymentMethod: payload.paymentMethod, subtotal: total, total }).returning();
-
-    for (const item of items) {
-      await db.insert(saleItems).values({ saleId: sale.id, productId: item.productId, productName: item.name, quantity: item.quantity, unitPrice: item.unitPrice, unitCost: item.unitCost || 0, lineTotal: item.unitPrice * item.quantity });
-      await db.update(products).set({ stock: sql`MAX(0, ${products.stock} - ${item.quantity})`, updatedAt: sql`CURRENT_TIMESTAMP` }).where(eq(products.id, item.productId));
-      await db.insert(stockMovements).values({ businessId, productId: item.productId, type: "sale", quantity: -item.quantity, referenceType: "sale", referenceId: sale.id });
-    }
-    return Response.json({ sale }, { status: 201 });
+    const { data, error } = await context.supabase.rpc("register_sale", { p_business_id: context.membership.business_id, p_payment_method: payload.paymentMethod, p_items: items.map((item) => ({ product_id: item.productId, name: item.name, quantity: item.quantity, unit_price: item.unitPrice, unit_cost: item.unitCost || 0 })) });
+    if (error) return Response.json({ error: error.message }, { status: 400 });
+    return Response.json({ saleId: data }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "No fue posible registrar la venta" }, { status: 500 });
   }
